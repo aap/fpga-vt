@@ -14,6 +14,7 @@ module ps2_rx(
 	reg active = 0;
 	reg [10:0] buffer;
 
+	wire falling_edge;
 	edgedet clkedge(clk, reset, clklow, falling_edge);
 	always @(posedge clk or posedge reset) begin
 		if(reset) begin

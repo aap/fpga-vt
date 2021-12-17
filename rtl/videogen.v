@@ -30,9 +30,9 @@ module videogen(
 			pixelH <= 0;
 			pixelV <= 0;
 		end else if(~vclk) begin
-			if(pixelH==1039) begin
+			if(pixelH==857) begin
 				pixelH <= 0;
-				if(pixelV==665)
+				if(pixelV==524)
 					pixelV <= 0;
 				else
 					pixelV <= pixelV + 1;
@@ -40,10 +40,10 @@ module videogen(
 				pixelH <= pixelH + 1;
 		end
 	end
-	assign hsync = pixelH>=856 && pixelH<976;
-	assign vsync = pixelV>=637 && pixelV<643;
-	wire validH = pixelH<800;
-	wire validV = pixelV<600;
+	assign hsync = pixelH>=736 && pixelH<798;
+	assign vsync = pixelV>=489 && pixelV<495;
+	wire validH = pixelH<720;
+	wire validV = pixelV<480;
 	assign dataEnable = validH && validV;
 
 	initial vclk = 0;
@@ -54,8 +54,8 @@ module videogen(
 
 	addressmap addrmap(screenX, screenY, screenmem_addr);
 
-	reg [7:0] chars[0:2048-1];
-	reg [9:0] vsr;	// video shift reg
+	reg [6:0] chars[0:1024-1];
+	reg [8:0] vsr;	// video shift reg
 
 	reg [6:0] lastX;
 	reg [6:0] screenX;
@@ -63,15 +63,17 @@ module videogen(
 	reg [3:0] charX;
 	reg [4:0] charY;
 	reg [7:0] membuf;
-	wire hsync_start = pixelH == 856;
-	wire hsync_mid = pixelH == 900;
-	wire hsync_end = pixelH == 976;
+	wire hsync_start = pixelH == 736;
+	wire hsync_mid = pixelH == 760;
+	wire hsync_end = pixelH == 790;
 	initial begin
-		$readmemh("chars.rom", chars);
+//		$readmemh("chars.rom", chars);
+		$readmemh("vt52char.rom", chars);
 	end
-	wire [10:0] charaddr = {membuf[6:0], charY[4:1]};
-	wire [9:0] charline = {chars[charaddr], 2'b0} | {chars[charaddr], 1'b0};
-	wire fetch = dataEnable && charX==9 || hsync_mid || hsync_end;
+	wire [10:0] charaddr = {membuf[6:0], charY[3:1]};
+//	wire [9:0] charline = {chars[charaddr], 2'b0} | {chars[charaddr], 1'b0};
+	wire [8:0] charline = charY[4] ? 0 : {1'b0, chars[charaddr], 1'b0};
+	wire fetch = dataEnable && charX==8 || hsync_mid || hsync_end;
 	wire doblink = blinkcnt[4] && (charY[4:1] == 8) && lastX == curX && screenY == curY;
 	reg [4:0] blinkcnt;
 	always @(posedge clock or posedge reset) begin
@@ -85,7 +87,7 @@ module videogen(
 			if(dataEnable) begin
 				if(~fetch) begin
 					charX <= charX + 1;
-					vsr <= {vsr[8:0], 1'b0};
+					vsr <= {vsr[7:0], 1'b0};
 				end
 			end
 
@@ -94,7 +96,7 @@ module videogen(
 				screenX <= 0;
 				if(validV) begin
 					// move down one scanline
-					if(charY == 24) begin
+					if(charY == 19) begin
 						charY <= 0;
 						if(screenY == 23)
 							screenY <= 0;
@@ -108,14 +110,14 @@ module videogen(
 					screenY <= topline;
 				end
 
-				if(pixelV == 600)
+				if(pixelV == 480)
 					blinkcnt <= blinkcnt + 1;
 			end
 
 			if(fetch) begin
 				charX <= 0;
 				if(doblink)
-					vsr <= 10'b0111111110;
+					vsr <= 9'b011111111;
 				else
 					vsr <= charline;
 				membuf <= screenmem_data;
@@ -125,9 +127,9 @@ module videogen(
 		end
 	end
 
-	assign RGBchannel[23:16] = vsr[9]==invert ? 0 : 255;
-	assign RGBchannel [15:8] = vsr[9]==invert ? 0 : 255;
-	assign RGBchannel  [7:0] = vsr[9]==invert ? 0 : 255;
+	assign RGBchannel[23:16] = vsr[8]==invert ? 0 : 255;
+	assign RGBchannel [15:8] = vsr[8]==invert ? 0 : 255;
+	assign RGBchannel  [7:0] = vsr[8]==invert ? 0 : 255;
 endmodule
 
 // address mapping like VT52

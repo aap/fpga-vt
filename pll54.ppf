@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <pinplan
- variation_name="pll80"
+ variation_name="pll54"
  megafunction_name="ALTERA_PLL"
  intended_family="Cyclone V"
  specifies="all_ports">

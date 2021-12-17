@@ -1,57 +1,29 @@
 `default_nettype none
 
-module toplevel(
+module pseudo_vt52(
+	input wire clk,
+	input wire reset,
+	input wire invert_video,
+	input wire bell_inverts,
 
-	//////////// CLOCK //////////
-	input 		          		CLOCK_125_p,
-	input 		          		CLOCK_50_B5B,
-	input 		          		CLOCK_50_B6A,
-	input 		          		CLOCK_50_B7A,
-	input 		          		CLOCK_50_B8A,
+	output wire HDMI_TX_CLK,
+	output wire [23:0] HDMI_TX_D,
+	output wire HDMI_TX_DE,
+	output wire HDMI_TX_HS,
+	input  wire HDMI_TX_INT,
+	output wire HDMI_TX_VS,
+	output wire hdmi_ready,
 
-	//////////// LED //////////
-	output		     [7:0]		LEDG,
-	output		     [9:0]		LEDR,
+	output wire I2C_SCL,
+	inout  wire I2C_SDA,
 
-	//////////// KEY //////////
-	input 		          		CPU_RESET_n,
-	input 		     [3:0]		KEY,
-	
-	//////////// SW //////////
-	input 		     [9:0]		SW,
+	input  wire UART_RX,
+	output wire UART_TX,
 
-	//////////// HDMI-TX //////////
-	output		          		HDMI_TX_CLK,
-	output		    [23:0]		HDMI_TX_D,
-	output		          		HDMI_TX_DE,
-	output		          		HDMI_TX_HS,
-	input 		          		HDMI_TX_INT,
-	output		          		HDMI_TX_VS,
-
-	//////////// I2C for Audio/HDMI-TX/Si5338/HSMC //////////
-	output		          		I2C_SCL,
-	inout 		          		I2C_SDA,
-
-	//////////// Uart to USB //////////
-	input 		          		UART_RX,
-	output		          		UART_TX,
-
-	//////////// GPIO, GPIO connect to GPIO Default //////////
-	inout 		    [35:0]		GPIO
+	input wire ps2_clk,
+	input wire ps2_data
 );
-	wire reset_n = CPU_RESET_n;
-	wire reset = ~reset_n;
-	wire clock50 = CLOCK_50_B5B;
-	wire clock25, locked;
-	wire clk = clock50;
-	
-	assign LEDG[0] = READY;
-	assign LEDG[9:1] = 0;
-	assign LEDR = 0;
-
-	// control video inversion with switch
-	wire invert = SW[0];
-
+	wire clock50 = clk;
 
 	wire [10:0] screenaddr;
 	addressmap addrmap(screenX, screenY, screenaddr);
@@ -74,6 +46,7 @@ module toplevel(
 	reg scroll = 0;
 	reg clrline = 1;
 	reg clrscreen = 1;
+	reg bell = 0;
 
 	wire [6:0] curXINC = curX == 79 ? curX : curX+1;
 	wire [4:0] curYINC = curY == 23 ? curY : curY+1;
@@ -94,6 +67,7 @@ module toplevel(
 			scroll <= 0;
 			clrline <= 1;
 			clrscreen <= 1;
+			bell <= 0;
 		end else begin
 			if(gotchar) begin
 				if(cadY) begin
@@ -142,6 +116,7 @@ module toplevel(
 					esc <= 0;
 				end else if(rx_data <'o40) begin
 					case(rx_data)
+					8'o007: bell <= ~bell;
 					8'o010: curX <= curXDEC;
 					8'o011:
 						if(curX < 72)
@@ -214,25 +189,25 @@ module toplevel(
 		.q_a(data_a),
 		.q_b(data_b));
 
-	/* need 80mhz clock for 800x600@60hz */
-	wire clock80;
-	pll80 pll80(
+	/* need 54mhz clock for 720x480@60hz */
+	wire clock54, locked;
+	pll54 pll54(
 	  .refclk(clock50),
 	  .rst(reset),
 
-	  .outclk_0(clock80),
+	  .outclk_0(clock54),
 	  .locked(locked)
 	);
 	/* video signal generator */
 	videogen videogen(
-		.clock      (clock80),
+		.clock      (clock54),
 		.reset      (~locked),
 
 		// terminal screen
 		.curX(curX),
 		.curY(curY_mem),
 		.topline(topline),
-		.invert(invert),
+		.invert(invert_video ^ (bell & bell_inverts)),
 		.screenmem_addr(address_b),
 		.screenmem_data(data_b),
 
@@ -245,18 +220,17 @@ module toplevel(
 	);
 
 	/* HDMI config */
-	wire READY;
 	I2C_HDMI_Config #(
 	  .CLK_Freq (50000000), // 50MHz
 	  .I2C_Freq (20000)    // 20kHz for i2c clock
 	)
 	I2C_HDMI_Config (
 	  .iCLK        (clock50),
-	  .iRST_N      (reset_n),
+	  .iRST_N      (~reset),
 	  .I2C_SCLK    (I2C_SCL),
 	  .I2C_SDAT    (I2C_SDA),
 	  .HDMI_TX_INT (HDMI_TX_INT),
-	  .READY       (READY)
+	  .READY       (hdmi_ready)
 	);
 
 
@@ -266,23 +240,30 @@ module toplevel(
 
 
 	/* UART */
+	wire uart_clk;
 	wire tx_send;
 	wire tx_clr = 0;
 	wire tx_done;
-	uart_tx #(50000000, 9600, 1) tx(.clk(clock50),
-		.data(kbd_ascii),
-		.data_clr(tx_clr),
-		.data_set(tx_send),
-		.tx(UART_TX),
-		.done(tx_done));
 	wire [7:0] rx_data;
 	wire rx_active;
 	wire rx_done;
-	uart_rx #(50000000, 9600) rx(.clk(clock50),
+	clkdiv #(50000000, 9600*16) uart_clkdiv(clock50, uart_clk);
+	uart uart(.clk(clock50), .reset(reset),
+		.uart_clk(uart_clk),
+		.twostop(1'b0),
+
+		.tx(UART_TX),
+		.tx_data(kbd_ascii),
+		.tx_data_clr(tx_clr),
+		.tx_data_set(tx_send),
+		.tx_done(tx_done),
+
 		.rx(UART_RX),
-		.data(rx_data),
+		.rx_data_clr(1'b0),
+		.rx_data(rx_data),
 		.rx_active(rx_active),
-		.rx_done(rx_done));
+		.rx_done(rx_done)
+	);
 
 	wire gotchar;
 	edgedet recv(clk, reset, rx_done, gotchar);
@@ -290,10 +271,7 @@ module toplevel(
 
 
 
-
 	/* PS/2 keyboard */
-	wire ps2_clk = GPIO[28];
-	wire ps2_data = GPIO[29];
 	wire [7:0] kbd_data;
 	wire kbd_done;
 	ps2_rx ps2_rx(.clk(clk), .reset(reset),
@@ -311,25 +289,4 @@ module toplevel(
 		.sendchar(tx_send),
 		.ascii(kbd_ascii));
 
-endmodule
-
-
-
-
-
-
-
-
-
-module edgedet(input wire clk, input wire reset, input wire in, output wire p);
-	reg [1:0] x;
-	reg [1:0] init = 0;
-	always @(posedge clk or posedge reset)
-		if(reset)
-			init <= 0;
-		else begin
-			x <= { x[0], in };
-			init <= { init[0], 1'b1 };
-		end
-	assign p = (&init) & x[0] & !x[1];
 endmodule
