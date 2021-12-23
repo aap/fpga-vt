@@ -39,12 +39,11 @@ module toplevel(
 	//////////// GPIO, GPIO connect to GPIO Default //////////
 	inout 		    [35:0]		GPIO
 );
-	wire reset_n = CPU_RESET_n;
-	wire reset = ~reset_n;
+	wire reset;
+	syncreset syncreset(clock50, ~CPU_RESET_n, reset);
+
 	wire clock50 = CLOCK_50_B5B;
-	wire clock25, locked;
-	wire clk = clock50;
-	
+
 	assign LEDG[0] = hdmi_ready;
 	assign LEDG[9:1] = 0;
 	assign LEDR = 0;
@@ -54,7 +53,7 @@ module toplevel(
 	wire bell_inverts = SW[1];
 
 	wire hdmi_ready;
-	pseudo_vt52 vt(.clk(clk), .reset(reset),
+	pseudo_vt52 vt(.clock50(clock50), .async_reset(~CPU_RESET_n),
 		.invert_video(invert),
 		.bell_inverts(bell_inverts),
 
@@ -78,11 +77,39 @@ module toplevel(
 endmodule
 
 
+module clkdiv
+#(parameter INCLK=50000000, OUTCLK=(2*9600))
+(
+	input wire inclk,
+	output wire outclk
+);
+	reg [31:0] cnt = 0;
+	assign outclk = cnt == INCLK/OUTCLK - 1;
+	always @(posedge inclk)
+		if(outclk)
+			cnt <= 0;
+		else
+			cnt <= cnt + 32'b1;
+endmodule
 
+module syncsignal(input wire clk, input wire in, output reg out);
+	reg [1:0] syn;
+	always @(posedge clk)
+		{out, syn} <= {syn, in};
+endmodule
 
+module syncreset(input wire clk, input wire async_reset, output reg sync_reset);
+	reg [7:0] sync;
 
-
-
+	initial
+		{sync_reset, sync} <= ~0;
+	always @(posedge clk or posedge async_reset) begin
+		if(async_reset)
+			{sync_reset, sync} <= ~0;
+		else
+			{sync_reset, sync} <= {sync[6:0], 1'b0};
+	end
+endmodule
 
 
 module edgedet(input wire clk, input wire reset, input wire in, output wire p);
